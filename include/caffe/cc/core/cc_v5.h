@@ -3,7 +3,6 @@
 #ifndef CC_H
 #define CC_H
 
-#include <opencv2/opencv.hpp>
 #include <initializer_list>
 #include <list>
 #include <mutex>
@@ -30,8 +29,22 @@
 
 namespace cc{
 
-	using cv::Mat;
-	using cv::Scalar;
+	//用宏指令，方便Mat作为参数的输入，同时去掉opencv依赖
+#define CVUMat(m)			(m).ptr<unsigned char>(0), (m).cols, (m).rows
+#define CVFMat(m)			(m).ptr<float>(0), (m).cols, (m).rows
+#define CVScalar(s)			CCScalar(s[0], s[1], s[2], s[3])
+#define CCScal(s)			Scalar(s[0], s[1], s[2], s[3])
+
+	struct CCAPI CCScalar{
+		double val[4];
+
+		CCScalar();
+		CCScalar(double v0, double v1 = 0, double v2 = 0, double v3 = 0);
+		double operator[](int index) const;
+		double& operator[](int index);
+
+		static CCScalar all(double value);
+	};
 
 
 	//
@@ -56,7 +69,7 @@ namespace cc{
 		BlobData();
 		virtual ~BlobData();
 		bool empty() const;
-		int count() const;
+		int count(int start_axis = 0) const;
 		void reshape(int num, int channels, int height, int width);
 		void reshapeLike(const BlobData* other);
 		void copyFrom(const BlobData* other);
@@ -84,15 +97,25 @@ namespace cc{
 		int num() const;
 		void set_cpu_data(float* data);
 
+		std::shared_ptr<Blob> clone(bool clonediff = false);
 		const float* cpu_data() const;
 		const float* gpu_data() const;
 		float* mutable_cpu_data();
 		float* mutable_gpu_data();
+		inline float* cpu_ptr(int n = 0, int c = 0, int h = 0, int w = 0){ return mutable_cpu_data() + offset(n, c, h, w); }
+		float* gpu_ptr(int n = 0, int c = 0, int h = 0, int w = 0){ return mutable_gpu_data() + offset(n, c, h, w); }
+		float& cpu_at(int n = 0, int c = 0, int h = 0, int w = 0){ return *(mutable_cpu_data() + offset(n, c, h, w)); }
+		float& gpu_at(int n = 0, int c = 0, int h = 0, int w = 0){ return *(mutable_gpu_data() + offset(n, c, h, w)); }
 
 		const float* cpu_diff() const;
 		const float* gpu_diff() const;
 		float* mutable_cpu_diff();
 		float* mutable_gpu_diff();
+		float* cpu_diff_ptr(int n = 0, int c = 0, int h = 0, int w = 0){ return mutable_cpu_diff() + offset(n, c, h, w); }
+		float* gpu_diff_ptr(int n = 0, int c = 0, int h = 0, int w = 0){ return mutable_gpu_diff() + offset(n, c, h, w); }
+		float& cpu_diff_at(int n = 0, int c = 0, int h = 0, int w = 0){ return *(mutable_cpu_diff() + offset(n, c, h, w)); }
+		float& gpu_diff_at(int n = 0, int c = 0, int h = 0, int w = 0){ return *(mutable_gpu_diff() + offset(n, c, h, w)); }
+		void setTo(float value);
 
 		void reshape(int num = 1, int channels = 1, int height = 1, int width = 1);
 		void reshape(int numShape, int* shapeDims);
@@ -100,11 +123,11 @@ namespace cc{
 		void copyFrom(const Blob* other, bool copyDiff = false, bool reshape = false);
 		void copyFrom(const BlobData* other);
 		void copyDiffFrom(const Blob* other);
-		void setData(int numIndex, const uchar* imdataptr, cv::Size imsize, int channels = 3, const Scalar& meanValue = Scalar(), float scale = 1.0f);
-		void setData(int numIndex, const float* imdataptr, cv::Size imsize, int channels = 3, const Scalar& meanValue = Scalar(), float scale = 1.0f);
-		bool setData(int numIndex, const void* imdataptr, int datalength, int color = 1, const Scalar& meanValue = Scalar(), float scale = 1.0f);
-		void setData(int numIndex, const Mat& data, const Scalar& meanValue = Scalar(), float scale = 1.0f);
-		std::shared_ptr<Blob> transpose(int axis0, int axis1, int axis2, int axis3);
+		void setData(int numIndex, const unsigned char* imdataptr, int width, int height, int channels = 3, const CCScalar& meanValue = CCScalar(), float scale = 1.0f);
+		void setData(int numIndex, const float* imdataptr, int width, int height, int channels = 3, const CCScalar& meanValue = CCScalar(), float scale = 1.0f);
+		bool setData(int numIndex, const void* imdataptr, int datalength, int color = 1, const CCScalar& meanValue = CCScalar(), float scale = 1.0f);
+		//void setData(int numIndex, const Mat& data, const CCScalar& meanValue = CCScalar(), float scale = 1.0f);
+		void transpose(int axis0, int axis1, int axis2, int axis3);
 		int offset(const int n, const int c = 0, const int h = 0, const int w = 0) const;
 		void updateInfo();
 
@@ -213,6 +236,7 @@ namespace cc{
 
 	//Callback function called at the end of each step
 	typedef void(*TrainStepEndCallback)(Solver* solver, int step, float smoothed_loss, void* userdata);
+	typedef float(*LearningRatePolicyFunction)(Solver* solver, int step, float stepsize, void* userdata);
 
 	class CCAPI Solver{
 	public:
@@ -238,12 +262,18 @@ namespace cc{
 		void postEarlyStopSignal();
 		void testAll();
 		void setSetpEndCallback(TrainStepEndCallback callback, void* userdata = nullptr);
+		void setLearningRatePolicyFunction(LearningRatePolicyFunction callback, void* userdata = nullptr);
 		TrainStepEndCallback getStepEndCallback();
 		void* getStepEndCallbackUserData();
+
+		LearningRatePolicyFunction getLearningRatePolicyFunction();
+		void* getLearningRatePolicyFunctionUserData();
 		
 	private:
 		TrainStepEndCallback stepEndCallback_;
+		LearningRatePolicyFunction learningRatePolicyFunction_;
 		void* stepEndCallbackUserData_;
+		void* learningRatePolicyUserData_;
 		void* signalHandler_;
 		void* _native;
 	};
@@ -261,6 +291,12 @@ namespace cc{
 
 	CCAPI void CCCALL setGPU(int id);
 	CCAPI bool CCCALL checkDevice(int id);
+
+	//返回GPU设备id号，失败返回-1
+	CCAPI int CCCALL getDevice();
+
+	//当前是否为rootSolver
+	CCAPI bool CCCALL rootSolver();
 
 
 	//
@@ -376,12 +412,6 @@ namespace cc{
 		std::mutex lock_;
 		std::list<_DType> frameList_;
 		volatile bool eof_ = false;
-	};
-
-	namespace plugin{
-
-		CCAPI void CCCALL openNetscope(const char* netName);
-		CCAPI bool CCCALL postPrototxt(const char* netName, const char* userName, const char* content, int length = -1);
 	};
 };
 
